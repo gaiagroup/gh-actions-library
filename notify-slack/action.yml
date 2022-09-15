@@ -1,0 +1,16 @@
+name: 'Notify Slack'
+description: 'Send a notification to slack'
+inputs:
+  job-status-success: # id of input
+    description: 'Status of the job'
+    required: true
+    default: true
+  token:
+    description: 'Github token'
+    required: true
+outputs:
+  payload: # id of output
+    description: 'The slack message payload JSON'
+runs:
+  using: 'node16'
+  main: 'dist/index.js'
