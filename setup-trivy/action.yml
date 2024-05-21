@@ -1,0 +1,39 @@
+# https://help.github.com/en/articles/metadata-syntax-for-github-actions
+name: Trivy Setup
+description: Install Trivy
+branding:
+  icon: anchor
+  color: blue
+
+inputs:
+  version:
+    description: 'Trivy Version (example: v2.2.0)'
+    required: false
+    default: "0.51.2"
+
+runs:
+  using: 'composite'
+  steps:
+    - name: install 
+      shell: bash
+      env:
+        VERSION: {{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        echo "Downloading Trivy"
+        for ext in {tar.gz,tar.gz.pem,tar.gz.sig}; do
+          curl -L -o "/tmp/trivy.${ext}" "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.${ext}"
+        done
+        
+        echo "Checking blob signature"
+        cosign verify-blob /tmp/trivy.tar.gz \
+        --certificate /tmp/trivy.tar.gz.pem \
+        --signature /tmp/trivy.tar.gz.sig \
+        --certificate-identity-regexp 'https://github\.com/aquasecurity/trivy/\.github/workflows/.+' \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+        echo "Installing binaries"
+        cd /usr/bin
+        tar -xzvf /tmp/trivy.tar.gz trivy
+        chmod +x /usr/bin/trivy
