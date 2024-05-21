@@ -17,7 +17,7 @@ runs:
     - name: install 
       shell: bash
       env:
-        VERSION: {{ inputs.version }}
+        VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
 
