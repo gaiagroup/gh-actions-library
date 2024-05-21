@@ -39,5 +39,5 @@ runs:
 
         echo "Installing binaries"
         cd /usr/bin
-        tar -xzvf /tmp/trivy.tar.gz trivy
-        chmod +x /usr/bin/trivy
+        sudo tar -xzvf /tmp/trivy.tar.gz trivy
+        sudo chmod +x /usr/bin/trivy
