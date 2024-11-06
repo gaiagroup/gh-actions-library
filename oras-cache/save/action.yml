@@ -1,0 +1,27 @@
+name: 'Push OCI Artifact'
+description: 'Persist OCI artifact on a remote registry.'
+inputs:
+  key:
+    description: 'Key used to save the artifact on registry.'
+    required: true
+  path:
+    description: 'Path that will be zipped and sent to registry.'
+    required: true
+  registry:
+    description: 'OCI Compatible Registry - Eg AWS ECR.'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: gaiagroup/gh-actions-library/setup-oras@master
+      with:
+        version: 1.2.0
+
+    - name: Zip Content
+      shell: bash
+      run: tar -cf ${{ inputs.key }} ${{ inputs.path }}
+
+    - name: Send artifact to Registry
+      shell: bash
+      run: oras push --image-spec v1.0 ${{ inputs.registry }}:${{ inputs.key }} ${{ inputs.key }}

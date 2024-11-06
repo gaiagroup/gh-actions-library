@@ -1,0 +1,24 @@
+name: 'Retrieve Cache'
+description: 'Retrieve OCI Artifacts using ORAS CLI'
+inputs:
+  key:
+    description: 'Key used to save the artifact on registry.'
+    required: true
+  registry:
+    description: 'OCI Compatible Registry - Eg AWS ECR.'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: gaiagroup/gh-actions-library/setup-oras@master
+      with:
+          version: 1.2.0
+
+    - name: Retrieve Content from Registry
+      shell: bash
+      run: oras pull ${{ inputs.registry }}:${{ inputs.key }}
+
+    - name: Unpack Content
+      shell: bash
+      run: tar -xf ${{ inputs.key }}
