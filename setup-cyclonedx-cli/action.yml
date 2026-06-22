@@ -1,0 +1,72 @@
+name: 'Setup CycloneDX CLI'
+description: 'Download and install CycloneDX CLI with SHA256 verification'
+inputs:
+    version:
+        description: 'CycloneDX CLI release version'
+        required: false
+        default: 'v0.32.0'
+    asset:
+        description: 'Release asset file name to download'
+        required: false
+        default: 'cyclonedx-linux-musl-x64'
+    sha256:
+        description: 'Expected SHA256 checksum of the selected release asset'
+        required: false
+        default: '29138e6068e6cf2dc60e776d078c2b17cbf45750c485aa12c28e1fef5556a15f'
+    github-token:
+        description: 'GitHub token used for authenticated release downloads'
+        required: false
+        default: ''
+outputs:
+    cyclonedx-cli-path:
+        description: 'Absolute path to the cyclonedx binary'
+        value: ${{ steps.setup.outputs.cyclonedx-cli-path }}
+runs:
+    using: 'composite'
+    steps:
+        -   name: Download and verify CycloneDX CLI
+            id: setup
+            shell: bash
+            env:
+                VERSION: ${{ inputs.version }}
+                ASSET: ${{ inputs.asset }}
+                EXPECTED_SHA256: ${{ inputs.sha256 }}
+                GH_TOKEN: ${{ inputs.github-token != '' && inputs.github-token || github.token }}
+            run: |
+                set -euo pipefail
+
+                install_dir="${RUNNER_TEMP}/cyclonedx-cli"
+                download_path="${install_dir}/${ASSET}"
+                install_path="${install_dir}/cyclonedx"
+
+                mkdir -p "${install_dir}"
+                gh release download "${VERSION}" \
+                    --repo CycloneDX/cyclonedx-cli \
+                    --pattern "${ASSET}" \
+                    --dir "${install_dir}" \
+                    --clobber
+
+                if [ ! -f "${download_path}" ]; then
+                    echo "Expected release asset was not downloaded: ${download_path}" >&2
+                    exit 1
+                fi
+
+                actual_sha256="$(sha256sum "${download_path}" | awk '{ print $1 }')"
+                if [ "${actual_sha256}" != "${EXPECTED_SHA256}" ]; then
+                    echo "CycloneDX CLI checksum mismatch." >&2
+                    echo "Expected: ${EXPECTED_SHA256}" >&2
+                    echo "Actual:   ${actual_sha256}" >&2
+                    exit 1
+                fi
+
+                mv "${download_path}" "${install_path}"
+                chmod +x "${install_path}"
+
+                if ! "${install_path}" --version; then
+                    echo "CycloneDX CLI failed to execute after installation." >&2
+                    exit 1
+                fi
+
+                echo "${install_dir}" >> "${GITHUB_PATH}"
+                echo "cyclonedx-cli-path=${install_path}" >> "${GITHUB_OUTPUT}"
+                echo "Installed CycloneDX CLI ${VERSION} at ${install_path}"
