@@ -1,43 +1,79 @@
 # https://help.github.com/en/articles/metadata-syntax-for-github-actions
 name: Trivy Setup
-description: Install Trivy
+description: Download and install Trivy with SHA256 verification
 branding:
   icon: anchor
   color: blue
 
 inputs:
   version:
-    description: 'Trivy Version (example: v2.2.0)'
+    description: 'Trivy release version'
     required: false
-    default: "0.51.2"
+    default: 'v0.71.2'
+  asset:
+    description: 'Release asset file name to download'
+    required: false
+    default: 'trivy_0.71.2_Linux-64bit.tar.gz'
+  sha256:
+    description: 'Expected SHA256 checksum of the selected release asset'
+    required: false
+    default: '0510e71e2fd39bf863856d499c8dc19feb4e7336546394c502a8f5cc7ab27460'
+  github-token:
+    description: 'GitHub token used for authenticated release downloads'
+    required: false
+    default: ''
+
+outputs:
+  trivy-path:
+    description: 'Absolute path to the trivy binary'
+    value: ${{ steps.setup.outputs.trivy-path }}
 
 runs:
   using: 'composite'
   steps:
-    - uses: sigstore/cosign-installer@v3.5.0
-      with:
-        cosign-release: 'v2.2.4'
-
-    - name: install 
+    - name: Download and verify Trivy
+      id: setup
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        ASSET: ${{ inputs.asset }}
+        EXPECTED_SHA256: ${{ inputs.sha256 }}
+        GH_TOKEN: ${{ inputs.github-token != '' && inputs.github-token || github.token }}
       run: |
         set -euo pipefail
 
-        echo "Downloading Trivy"
-        for ext in {tar.gz,tar.gz.pem,tar.gz.sig}; do
-          curl -L -o "/tmp/trivy.${ext}" "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.${ext}"
-        done
-        
-        echo "Checking blob signature"
-        cosign verify-blob /tmp/trivy.tar.gz \
-        --certificate /tmp/trivy.tar.gz.pem \
-        --signature /tmp/trivy.tar.gz.sig \
-        --certificate-identity-regexp 'https://github\.com/aquasecurity/trivy/\.github/workflows/.+' \
-        --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+        install_dir="${RUNNER_TEMP}/trivy"
+        download_path="${install_dir}/${ASSET}"
+        install_path="${install_dir}/trivy"
 
-        echo "Installing binaries"
-        cd /usr/bin
-        sudo tar -xzvf /tmp/trivy.tar.gz trivy
-        sudo chmod +x /usr/bin/trivy
+        mkdir -p "${install_dir}"
+        gh release download "${VERSION}" \
+          --repo aquasecurity/trivy \
+          --pattern "${ASSET}" \
+          --dir "${install_dir}" \
+          --clobber
+
+        if [ ! -f "${download_path}" ]; then
+          echo "Expected release asset was not downloaded: ${download_path}" >&2
+          exit 1
+        fi
+
+        actual_sha256="$(sha256sum "${download_path}" | awk '{ print $1 }')"
+        if [ "${actual_sha256}" != "${EXPECTED_SHA256}" ]; then
+          echo "Trivy checksum mismatch." >&2
+          echo "Expected: ${EXPECTED_SHA256}" >&2
+          echo "Actual:   ${actual_sha256}" >&2
+          exit 1
+        fi
+
+        tar -xzf "${download_path}" -C "${install_dir}" trivy
+        chmod +x "${install_path}"
+
+        if ! "${install_path}" --version; then
+          echo "Trivy failed to execute after installation." >&2
+          exit 1
+        fi
+
+        echo "${install_dir}" >> "${GITHUB_PATH}"
+        echo "trivy-path=${install_path}" >> "${GITHUB_OUTPUT}"
+        echo "Installed Trivy ${VERSION} at ${install_path}"
