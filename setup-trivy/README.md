@@ -1,6 +1,8 @@
 # Setup Trivy
 
-This GitHub Action downloads and installs [Trivy](https://github.com/aquasecurity/trivy) with SHA256 verification. Releases are fetched via the GitHub CLI (`gh`) using an authenticated token to avoid unauthenticated download rate limits.
+This GitHub Action downloads and installs [Trivy](https://github.com/aquasecurity/trivy) with SHA256 verification.
+
+Release assets are fetched via unauthenticated `curl` downloads from the public GitHub release URL. Authenticated `gh` API access to `aquasecurity/trivy` is blocked on GitHub-hosted runners because the Aqua Security organization has an IP allow list enabled.
 
 ## Usage
 
@@ -18,9 +20,9 @@ jobs:
 When bumping Trivy, update `version`, `asset`, and `sha256` together. The SHA256 can be taken from the release checksums file:
 
 ```bash
-gh release download v0.71.2 --repo aquasecurity/trivy \
-  --pattern 'trivy_0.71.2_checksums.txt' --dir /tmp
-grep 'Linux-64bit.tar.gz' /tmp/trivy_0.71.2_checksums.txt
+curl -fsSL -o /tmp/trivy_checksums.txt \
+  "https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_checksums.txt"
+grep 'Linux-64bit.tar.gz' /tmp/trivy_checksums.txt
 ```
 
 ```yaml
@@ -38,7 +40,6 @@ grep 'Linux-64bit.tar.gz' /tmp/trivy_0.71.2_checksums.txt
 | `version` | no | Trivy release tag (with `v` prefix) | `v0.71.2` |
 | `asset` | no | Release asset file name to download | `trivy_0.71.2_Linux-64bit.tar.gz` |
 | `sha256` | no | Expected SHA256 checksum of the asset | see `action.yml` |
-| `github-token` | no | Token for authenticated release downloads; defaults to `github.token` | `''` |
 
 ## Outputs
 
