@@ -1,81 +1,57 @@
-# 🤖 `setup-just` action
+# Setup just
 
-![build](https://img.shields.io/github/workflow/status/extractions/setup-just/build)
+This GitHub Action downloads and installs the [just](https://github.com/casey/just) command runner with SHA256 verification.
 
-This GitHub Action will install a release of the
-[just](https://github.com/casey/just) command runner for you.
+Release assets are fetched with authenticated `gh release download` (using `github.token` by default) to avoid API rate limits.
 
 ## Usage
 
-### Examples
-
-In most cases all you will need is the following in your workflow.
-
 ```yaml
-- uses: extractions/setup-just@v1
+jobs:
+  my-awesome-job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: gaiagroup/gh-actions-library/setup-just@master
+      - run: just --version
 ```
 
-If you want a specific version of `just` you can specify this by passing the
-`just-version` input.
+## Pinning a version
+
+When bumping just, update `just-version`, `asset`, and `sha256` together. Checksums are published in the release `SHA256SUMS` file:
+
+```bash
+gh release download 1.57.0 --repo casey/just --pattern SHA256SUMS --dir /tmp
+grep 'x86_64-unknown-linux-musl' /tmp/SHA256SUMS
+```
 
 ```yaml
-- uses: extractions/setup-just@v1
+- uses: gaiagroup/gh-actions-library/setup-just@master
   with:
-    just-version: '0.10'
+    just-version: '1.57.0'
+    asset: just-1.57.0-x86_64-unknown-linux-musl.tar.gz
+    sha256: 45b548094283cb9739af8f13273b8cddeee869f5b4ef2bb631b1f311cb566155
 ```
 
-In rare circumstances you might get rate limiting errors, this is because this
-workflow has to make requests to GitHub API in order to list available releases.
-If this happens you can set the `GITHUB_TOKEN` environment variable.
+For non-Linux platforms, pick the matching release asset (for example `just-1.57.0-x86_64-apple-darwin.tar.gz` or `just-1.57.0-x86_64-pc-windows-msvc.zip`) and its SHA256 from `SHA256SUMS`.
 
-```yaml
-- uses: extractions/setup-just@v1
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+`just-version` must be an exact release tag (for example `1.57.0`). NPM-style ranges such as `0.10` or `^1.0.0` are no longer supported.
 
-### Inputs
+## Inputs
 
-| Name           | Required | Description                             | Type   | Default |
-| -------------- | -------- | --------------------------------------- | ------ | ------- |
-| `just-version` | no       | A valid NPM-style semver specification. | string | *       |
+| Name | Required | Description | Default |
+| --- | --- | --- | --- |
+| `just-version` | no | just release tag (no `v` prefix) | `1.57.0` |
+| `asset` | no | Release asset file name to download | `just-1.57.0-x86_64-unknown-linux-musl.tar.gz` |
+| `sha256` | no | Expected SHA256 checksum of the asset | see `action.yaml` |
+| `github-token` | no | Token for authenticated `gh` downloads | `${{ github.token }}` |
 
-The semver specification is passed directly to NPM's [semver
-package](https://www.npmjs.com/package/semver). This GitHub Action will install
-the latest matching release. Examples include
+## Outputs
 
-- `just-version: '*'` latest version (default).
-- `just-version: '0.10'` equivalent to `>=0.10.0 <0.11.0`.
-- `just-version: '0.10.x'` equivalent to `>=0.10.0 <0.11.0`.
-- `just-version: '0.10.0'` equivalent to `=0.10.0`.
-- `just-version: '^0.10.0'` equivalent to `>=0.10.0 <0.11.0`.
+| Name | Description |
+| --- | --- |
+| `just-path` | Absolute path to the installed `just` binary |
 
-## Development
-
-Most of the installation logic is done in a shared library located at
-[@extractions/setup-crate](https://github.com/extractions/setup-crate).
-
-The following commands are useful for development.
-
-- `npm i`
-
-  Install all dependencies.
-
-- `npm run fmt`
-
-  Format the source code.
-
-- `npm run lint`
-
-  Run all lints.
-
-- `npm run run`
-
-  Test the action by running it.
-
-- `npm run build`
-
-  Build the action and update `dist/`.
+The install directory is also appended to `GITHUB_PATH`, so `just` is available in subsequent steps.
 
 ## License
 
