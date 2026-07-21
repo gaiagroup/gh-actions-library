@@ -1,12 +1,97 @@
 name: 'Setup just'
-author: 'Ross MacArthur'
-description: 'Install the just command runner'
+description: 'Download and install the just command runner with SHA256 verification'
 branding:
   icon: 'play'
   color: 'blue'
 inputs:
   just-version:
-    description: 'A valid semver specifier of the just version to install'
+    description: 'just release version (GitHub release tag)'
+    required: false
+    default: '1.57.0'
+  asset:
+    description: 'Release asset file name to download'
+    required: false
+    default: 'just-1.57.0-x86_64-unknown-linux-musl.tar.gz'
+  sha256:
+    description: 'Expected SHA256 checksum of the selected release asset'
+    required: false
+    default: '45b548094283cb9739af8f13273b8cddeee869f5b4ef2bb631b1f311cb566155'
+  github-token:
+    description: 'GitHub token used for authenticated release downloads'
+    required: false
+    default: ''
+outputs:
+  just-path:
+    description: 'Absolute path to the just binary'
+    value: ${{ steps.setup.outputs.just-path }}
 runs:
-  using: 'node12'
-  main: 'dist/index.js'
+  using: 'composite'
+  steps:
+    - name: Download and verify just
+      id: setup
+      shell: bash
+      env:
+        JUST_VERSION: ${{ inputs.just-version }}
+        ASSET: ${{ inputs.asset }}
+        EXPECTED_SHA256: ${{ inputs.sha256 }}
+        GH_TOKEN: ${{ inputs.github-token != '' && inputs.github-token || github.token }}
+      run: |
+        set -euo pipefail
+
+        install_dir="${RUNNER_TEMP}/just"
+        download_path="${install_dir}/${ASSET}"
+        install_path="${install_dir}/just"
+
+        mkdir -p "${install_dir}"
+        gh release download "${JUST_VERSION}" \
+          --repo casey/just \
+          --pattern "${ASSET}" \
+          --dir "${install_dir}" \
+          --clobber
+
+        if [ ! -f "${download_path}" ]; then
+          echo "Expected release asset was not downloaded: ${download_path}" >&2
+          exit 1
+        fi
+
+        actual_sha256="$(sha256sum "${download_path}" | awk '{ print $1 }')"
+        if [ "${actual_sha256}" != "${EXPECTED_SHA256}" ]; then
+          echo "just checksum mismatch." >&2
+          echo "Expected: ${EXPECTED_SHA256}" >&2
+          echo "Actual:   ${actual_sha256}" >&2
+          exit 1
+        fi
+
+        case "${ASSET}" in
+          *.tar.gz|*.tgz)
+            tar -xzf "${download_path}" -C "${install_dir}"
+            ;;
+          *.zip)
+            unzip -o "${download_path}" -d "${install_dir}"
+            ;;
+          *)
+            echo "Unsupported asset archive type: ${ASSET}" >&2
+            echo "Expected a .tar.gz or .zip release asset." >&2
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f "${install_path}" ]; then
+          found="$(find "${install_dir}" -type f \( -name 'just' -o -name 'just.exe' \) | head -n 1 || true)"
+          if [ -z "${found}" ]; then
+            echo "just binary not found after extracting ${ASSET}" >&2
+            exit 1
+          fi
+          install_path="${found}"
+        fi
+
+        chmod +x "${install_path}"
+
+        if ! "${install_path}" --version; then
+          echo "just failed to execute after installation." >&2
+          exit 1
+        fi
+
+        echo "$(dirname "${install_path}")" >> "${GITHUB_PATH}"
+        echo "just-path=${install_path}" >> "${GITHUB_OUTPUT}"
+        echo "Installed just ${JUST_VERSION} at ${install_path}"
