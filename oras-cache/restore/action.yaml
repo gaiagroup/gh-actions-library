@@ -1,0 +1,97 @@
+name: 'ORAS cache: restore'
+description: 'Restore a directory previously saved as an OCI artifact (ORAS) in a container registry such as AWS ECR'
+branding:
+  icon: 'download-cloud'
+  color: 'blue'
+inputs:
+  registry:
+    description: 'OCI repository URI without tag, e.g. 123456789012.dkr.ecr.eu-central-1.amazonaws.com/my/pipeline-cache'
+    required: true
+  key:
+    description: 'Cache key, used as the artifact tag'
+    required: true
+  path:
+    description: 'Directory to restore the archive into (created if missing)'
+    required: true
+  fail-on-cache-miss:
+    description: 'Fail the step if the key is not found in the registry'
+    required: false
+    default: 'false'
+  ecr-login:
+    description: 'Log in to the registry with `aws ecr get-login-password` (region derived from the registry host)'
+    required: false
+    default: 'true'
+  oras-version:
+    description: 'ORAS CLI version to install'
+    required: false
+    default: '1.2.0'
+outputs:
+  cache-hit:
+    description: '"true" when the key was found and extracted, "false" otherwise'
+    value: ${{ steps.restore.outputs.cache-hit }}
+  fingerprint:
+    description: 'SHA256 of the restored tree (relative paths + sizes). Pass to oras-cache/save as skip-if-fingerprint to avoid re-pushing an unchanged cache'
+    value: ${{ steps.restore.outputs.fingerprint }}
+runs:
+  using: 'composite'
+  steps:
+    - uses: gaiagroup/gh-actions-library/setup-oras@master
+      with:
+        version: ${{ inputs.oras-version }}
+
+    - name: Login to registry
+      if: inputs.ecr-login == 'true'
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+        host="${REGISTRY%%/*}"
+        case "${host}" in
+          *.dkr.ecr.*.amazonaws.com) region="$(echo "${host}" | cut -d. -f4)" ;;
+          *) echo "ecr-login is enabled but ${host} is not an ECR registry host" >&2; exit 1 ;;
+        esac
+        aws ecr get-login-password --region "${region}" \
+          | oras login --username AWS --password-stdin "${host}"
+
+    - name: Restore
+      id: restore
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        KEY: ${{ inputs.key }}
+        TARGET: ${{ inputs.path }}
+        FAIL_ON_MISS: ${{ inputs.fail-on-cache-miss }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${TARGET}"
+        work="${RUNNER_TEMP}/oras-cache"
+        mkdir -p "${work}"
+
+        hit=false
+        if oras pull "${REGISTRY}:${KEY}" -o "${work}"; then
+          archive="$(find "${work}" -maxdepth 1 -type f -name "${KEY}.tar*" | head -n 1 || true)"
+          if [ -z "${archive}" ]; then
+            echo "Artifact ${KEY} was pulled but contains no ${KEY}.tar* layer" >&2
+            exit 1
+          fi
+          case "${archive}" in
+            *.tar.zst) tar --zstd -xf "${archive}" -C "${TARGET}" ;;
+            *.tar.gz)  tar -xzf "${archive}" -C "${TARGET}" ;;
+            *.tar)     tar -xf "${archive}" -C "${TARGET}" ;;
+            *) echo "Unsupported archive: ${archive}" >&2; exit 1 ;;
+          esac
+          rm -f "${archive}"
+          hit=true
+          echo "Restored ${KEY} ($(du -sh "${TARGET}" | cut -f1)) into ${TARGET}"
+        else
+          if [ "${FAIL_ON_MISS}" = "true" ]; then
+            echo "Cache miss for ${REGISTRY}:${KEY}" >&2
+            exit 1
+          fi
+          echo "::notice::oras-cache miss for ${KEY}"
+        fi
+
+        fingerprint="$(cd "${TARGET}" && find . -type f -printf '%P %s\n' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+        echo "cache-hit=${hit}" >> "${GITHUB_OUTPUT}"
+        echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
