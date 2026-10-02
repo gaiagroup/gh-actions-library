@@ -1,0 +1,100 @@
+name: 'ORAS cache: save'
+description: 'Archive a directory and push it as an OCI artifact (ORAS) to a container registry such as AWS ECR'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+inputs:
+  registry:
+    description: 'OCI repository URI without tag, e.g. 123456789012.dkr.ecr.eu-central-1.amazonaws.com/my/pipeline-cache'
+    required: true
+  key:
+    description: 'Cache key, used as the artifact tag. Mutable: pushing the same key replaces the previous artifact'
+    required: true
+  path:
+    description: 'Directory to archive'
+    required: true
+  skip-if-fingerprint:
+    description: 'Skip the push when the current tree fingerprint equals this value (use the fingerprint output of oras-cache/restore)'
+    required: false
+    default: ''
+  compression:
+    description: 'Archive compression: zstd, gzip or none'
+    required: false
+    default: 'zstd'
+  ecr-login:
+    description: 'Log in to the registry with `aws ecr get-login-password` (region derived from the registry host)'
+    required: false
+    default: 'true'
+  oras-version:
+    description: 'ORAS CLI version to install'
+    required: false
+    default: '1.2.0'
+outputs:
+  pushed:
+    description: '"true" when an artifact was pushed, "false" when skipped'
+    value: ${{ steps.save.outputs.pushed }}
+runs:
+  using: 'composite'
+  steps:
+    - uses: gaiagroup/gh-actions-library/setup-oras@master
+      with:
+        version: ${{ inputs.oras-version }}
+
+    - name: Login to registry
+      if: inputs.ecr-login == 'true'
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+        host="${REGISTRY%%/*}"
+        case "${host}" in
+          *.dkr.ecr.*.amazonaws.com) region="$(echo "${host}" | cut -d. -f4)" ;;
+          *) echo "ecr-login is enabled but ${host} is not an ECR registry host" >&2; exit 1 ;;
+        esac
+        aws ecr get-login-password --region "${region}" \
+          | oras login --username AWS --password-stdin "${host}"
+
+    - name: Save
+      id: save
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        KEY: ${{ inputs.key }}
+        SOURCE: ${{ inputs.path }}
+        SKIP_FINGERPRINT: ${{ inputs.skip-if-fingerprint }}
+        COMPRESSION: ${{ inputs.compression }}
+      run: |
+        set -euo pipefail
+        if [ ! -d "${SOURCE}" ]; then
+          echo "Path ${SOURCE} does not exist, nothing to save" >&2
+          exit 1
+        fi
+
+        if [ -n "${SKIP_FINGERPRINT}" ]; then
+          fingerprint="$(cd "${SOURCE}" && find . -type f -printf '%P %s\n' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+          if [ "${fingerprint}" = "${SKIP_FINGERPRINT}" ]; then
+            echo "Tree unchanged since restore, skipping push of ${KEY}"
+            echo "pushed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+        fi
+
+        work="${RUNNER_TEMP}/oras-cache"
+        mkdir -p "${work}"
+        case "${COMPRESSION}" in
+          zstd) archive="${KEY}.tar.zst"; tar --zstd -cf "${work}/${archive}" -C "${SOURCE}" . ;;
+          gzip) archive="${KEY}.tar.gz";  tar -czf "${work}/${archive}" -C "${SOURCE}" . ;;
+          none) archive="${KEY}.tar";     tar -cf "${work}/${archive}" -C "${SOURCE}" . ;;
+          *) echo "Unsupported compression: ${COMPRESSION} (zstd|gzip|none)" >&2; exit 1 ;;
+        esac
+
+        # Push from the work dir so the layer title is the bare file name and
+        # oras-cache/restore can find it regardless of where it pulls to.
+        # --image-spec v1.0 keeps the manifest compatible with registries that
+        # reject OCI 1.1 artifact manifests (older ECR behaviour).
+        cd "${work}"
+        oras push --image-spec v1.0 "${REGISTRY}:${KEY}" "${archive}"
+        echo "Pushed ${archive} ($(du -sh "${archive}" | cut -f1)) as ${REGISTRY}:${KEY}"
+        rm -f "${archive}"
+        echo "pushed=true" >> "${GITHUB_OUTPUT}"
